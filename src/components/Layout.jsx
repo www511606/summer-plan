@@ -63,7 +63,7 @@ export default function Layout() {
     <div className="min-h-screen" style={{ background: '#fef7f0' }}>
       {/* 顶部栏 */}
       <header className="sticky top-0 z-40" style={{ background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)', borderBottom: '1px solid #f1f5f9' }}>
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <span className="text-xl">📋</span>
             <span className="text-lg font-bold" style={{ color: '#f97316' }}>暑假计划</span>
@@ -87,18 +87,16 @@ export default function Layout() {
         </div>
       </header>
 
-      {/* 主内容 */}
-      <main className="max-w-4xl mx-auto px-4 py-5">
-        <Outlet />
-      </main>
-
-      {/* 底部导航 - 所有屏幕都显示 */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 safe-area-bottom" style={{
-        background: 'rgba(255,255,255,0.95)',
-        backdropFilter: 'blur(12px)',
-        borderTop: '1px solid #f1f5f9',
-      }}>
-        <div className="flex items-center justify-around py-2 px-2 max-w-md mx-auto">
+      {/* 左侧导航 + 右侧内容 */}
+      <div className="max-w-6xl mx-auto flex px-4 py-5 gap-6">
+        {/* 左侧导航 */}
+        <nav className="hidden sm:flex flex-col items-center gap-1 py-4 pr-4" style={{
+          width: '72px',
+          borderRight: '1px solid #f1f5f9',
+          position: 'sticky',
+          top: '80px',
+          alignSelf: 'flex-start',
+        }}>
           {navItems.map((item) => {
             const Icon = item.icon
             const isActive = location.pathname === item.path
@@ -106,19 +104,24 @@ export default function Layout() {
               <Link
                 key={item.path}
                 to={item.path}
-                className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all"
+                className="flex flex-col items-center gap-1 w-16 py-2 rounded-xl transition-all"
                 style={{
                   color: isActive ? '#f97316' : '#94a3b8',
                   ...(isActive ? { background: '#fff7ed' } : {}),
                 }}
+                title={item.label}
               >
                 <Icon className="w-5 h-5" />
-                <span className="text-[11px] font-medium">{item.label}</span>
+                <span className="text-[10px] font-medium">{item.label}</span>
               </Link>
             )
           })}
-        </div>
-      </nav>
+        </nav>
+        {/* 右侧内容 */}
+        <main className="flex-1 min-w-0 sm:max-w-2xl lg:max-w-3xl">
+          <Outlet />
+        </main>
+      </div>
     </div>
   )
 }

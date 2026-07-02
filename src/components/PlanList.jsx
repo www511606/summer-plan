@@ -31,47 +31,59 @@ export default function PlanList() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
+      console.log('[PlanList] currentUser:', user.id, user.email)
+
       const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+      console.log('[PlanList] profile:', p)
       setProfile(p)
 
       if (p?.role === 'parent') {
         // 加载家长绑定的所有孩子
-        const { data: famData } = await supabase
+        console.log('[PlanList] querying family_members for parent:', user.id)
+        const { data: famData, error: famError } = await supabase
           .from('family_members')
-          .select('child_id')
+          .select('*')  // 先查全部字段看看
           .eq('parent_id', user.id)
+        console.log('[PlanList] family_members result:', famData, 'error:', famError)
 
         if (famData && famData.length > 0) {
           const childIds = famData.map(f => f.child_id)
-          const { data: childProfiles } = await supabase
+          console.log('[PlanList] childIds:', childIds)
+
+          const { data: childProfiles, error: profError } = await supabase
             .from('profiles')
             .select('id, nickname')
             .in('id', childIds)
+          console.log('[PlanList] child profiles:', childProfiles, 'error:', profError)
 
           setChildren(childProfiles || [])
 
-          // 如果没有选中的孩子，默认选第一个
-          if (!selectedChildId && childProfiles?.length > 0) {
-            setSelectedChildId(childProfiles[0].id)
+          // 计算最终要选中的孩子ID
+          const finalChildId = selectedChildId || (childProfiles?.length > 0 ? childProfiles[0].id : null)
+          if (finalChildId && finalChildId !== selectedChildId) {
+            setSelectedChildId(finalChildId)
           }
-        } else {
-          setChildren([])
-        }
 
-        // 如果选了特定孩子，按孩子查；否则显示空
-        if (selectedChildId) {
-          const tasksData = await getChildTasksByDate(user.id, selectedChildId, dateStr)
-          // 批量加载评论
-          for (const task of tasksData) {
-            const { data: comments } = await supabase
-              .from('comments')
-              .select('*, user:profiles!fk_comment_user(nickname, role)')
-              .eq('task_id', task.id)
-              .order('created_at', { ascending: true })
-            task.comments = comments || []
+          // 用最终选中的孩子ID查询任务（避免依赖闭包中的旧值）
+          if (finalChildId) {
+            const tasksData = await getChildTasksByDate(user.id, finalChildId, dateStr)
+            console.log('[PlanList] tasks for child:', tasksData)
+            // 批量加载评论
+            for (const task of tasksData) {
+              const { data: comments } = await supabase
+                .from('comments')
+                .select('*, user:profiles!fk_comment_user(nickname, role)')
+                .eq('task_id', task.id)
+                .order('created_at', { ascending: true })
+              task.comments = comments || []
+            }
+            setTasks(tasksData)
+          } else {
+            setTasks([])
           }
-          setTasks(tasksData)
         } else {
+          console.log('[PlanList] no family_members found')
+          setChildren([])
           setTasks([])
         }
       } else {
@@ -103,19 +115,17 @@ export default function PlanList() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // 查找邮箱对应的用户
-      const { data: childUser, error: searchErr } = await supabase
+      // 通过昵称搜索孩子（孩子注册时会设置昵称）
+      const { data: childProfile, error: searchErr } = await supabase
         .from('profiles')
-        .select('id, nickname')
-        .eq('id', childEmail) // 这里需要先找到用户的 id
+        .select('id, nickname, role')
+        .eq('nickname', childEmail.trim())
+        .eq('role', 'child')
         .single()
 
-      // 尝试通过 auth 查找
-      const { data: authData } = await supabase.auth.admin.listUsers()
-      const matchedUser = authData?.users?.find(u => u.email?.toLowerCase() === childEmail.toLowerCase())
-
-      if (!matchedUser) {
-        alert('找不到该邮箱的用户，请确认孩子已注册')
+      if (searchErr || !childProfile) {
+        alert('找不到该昵称的孩子，请确认：\n1. 孩子已注册\n2. 输入的昵称和注册时的一致')
+        setInviteLoading(false)
         return
       }
 
@@ -124,18 +134,19 @@ export default function PlanList() {
         .from('family_members')
         .select('id')
         .eq('parent_id', user.id)
-        .eq('child_id', matchedUser.id)
+        .eq('child_id', childProfile.id)
         .single()
 
       if (existing) {
         alert('该孩子已经在你家里了')
+        setInviteLoading(false)
         return
       }
 
       // 添加绑定关系
       const { error: insertErr } = await supabase
         .from('family_members')
-        .insert([{ parent_id: user.id, child_id: matchedUser.id }])
+        .insert([{ parent_id: user.id, child_id: childProfile.id }])
 
       if (insertErr) throw insertErr
 
@@ -344,7 +355,7 @@ export default function PlanList() {
                   type="email"
                   value={childEmail}
                   onChange={(e) => setChildEmail(e.target.value)}
-                  placeholder="输入孩子的注册邮箱"
+                  placeholder="输入孩子的昵称"
                   className="flex-1 px-3 py-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-orange-200"
                   style={{ borderColor: '#e5e7eb' }}
                 />
@@ -358,7 +369,7 @@ export default function PlanList() {
                 </button>
               </div>
               <p className="text-xs mt-2" style={{ color: '#94a3b8' }}>
-                孩子需要先注册账号，然后用孩子的邮箱邀请绑定
+                孩子需要先注册账号，然后用孩子的昵称邀请绑定
               </p>
             </div>
           )}

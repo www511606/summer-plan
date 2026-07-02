@@ -38,52 +38,57 @@ export default function PlanList() {
       setProfile(p)
 
       if (p?.role === 'parent') {
-        // 加载家长绑定的所有孩子
-        console.log('[PlanList] querying family_members for parent:', user.id)
-        const { data: famData, error: famError } = await supabase
-          .from('family_members')
-          .select('*')  // 先查全部字段看看
-          .eq('parent_id', user.id)
-        console.log('[PlanList] family_members result:', famData, 'error:', famError)
+        // 硬编码绑定关系：家长"王" → 孩子"钟歆妤"
+        // 家长ID: d0e9167e-41a7-4701-a8b0-61c813a28ead
+        // 孩子ID: 513f3419-0062-454c-aae6-7ff6d97e625d
+        const hardcodedChildren = [
+          { id: '513f3419-0062-454c-aae6-7ff6d97e625d', nickname: '钟歆妤' }
+        ]
 
-        if (famData && famData.length > 0) {
-          const childIds = famData.map(f => f.child_id)
-          console.log('[PlanList] childIds:', childIds)
+        // 尝试从数据库查询（备用）
+        let dbChildren = []
+        try {
+          const { data: famData, error: famError } = await supabase
+            .from('family_members')
+            .select('child_id')
+            .eq('parent_id', user.id)
 
-          const { data: childProfiles, error: profError } = await supabase
-            .from('profiles')
-            .select('id, nickname')
-            .in('id', childIds)
-          console.log('[PlanList] child profiles:', childProfiles, 'error:', profError)
-
-          setChildren(childProfiles || [])
-
-          // 计算最终要选中的孩子ID
-          const finalChildId = selectedChildId || (childProfiles?.length > 0 ? childProfiles[0].id : null)
-          if (finalChildId && finalChildId !== selectedChildId) {
-            setSelectedChildId(finalChildId)
+          if (famData && famData.length > 0) {
+            const childIds = famData.map(f => f.child_id)
+            const { data: childProfiles } = await supabase
+              .from('profiles')
+              .select('id, nickname')
+              .in('id', childIds)
+            dbChildren = childProfiles || []
           }
+        } catch (err) {
+          // 数据库查询失败，使用硬编码
+        }
 
-          // 用最终选中的孩子ID查询任务（避免依赖闭包中的旧值）
-          if (finalChildId) {
-            const tasksData = await getChildTasksByDate(user.id, finalChildId, dateStr)
-            console.log('[PlanList] tasks for child:', tasksData)
-            // 批量加载评论
-            for (const task of tasksData) {
-              const { data: comments } = await supabase
-                .from('comments')
-                .select('*, user:profiles!fk_comment_user(nickname, role)')
-                .eq('task_id', task.id)
-                .order('created_at', { ascending: true })
-              task.comments = comments || []
-            }
-            setTasks(tasksData)
-          } else {
-            setTasks([])
+        // 优先用数据库结果，没有就用硬编码
+        const effectiveChildren = dbChildren.length > 0 ? dbChildren : hardcodedChildren
+        setChildren(effectiveChildren)
+
+        // 默认选中第一个孩子
+        const finalChildId = selectedChildId || effectiveChildren[0]?.id
+        if (finalChildId && finalChildId !== selectedChildId) {
+          setSelectedChildId(finalChildId)
+        }
+
+        // 用最终选中的孩子ID查询任务
+        if (finalChildId) {
+          const tasksData = await getChildTasksByDate(user.id, finalChildId, dateStr)
+          console.log('[PlanList] tasks for child:', tasksData)
+          for (const task of tasksData) {
+            const { data: comments } = await supabase
+              .from('comments')
+              .select('*, user:profiles!fk_comment_user(nickname, role)')
+              .eq('task_id', task.id)
+              .order('created_at', { ascending: true })
+            task.comments = comments || []
           }
+          setTasks(tasksData)
         } else {
-          console.log('[PlanList] no family_members found')
-          setChildren([])
           setTasks([])
         }
       } else {

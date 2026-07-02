@@ -1,5 +1,6 @@
 -- ============================================
 -- Summer Plan: 修复家长看不到孩子列表的问题
+-- 幂等版本：可以反复执行，不会报错
 -- 在 Supabase SQL Editor 中执行
 -- ============================================
 
@@ -15,16 +16,52 @@ CREATE TABLE IF NOT EXISTS family_members (
 );
 
 -- ----------------------------
--- 2. 给 family_members 表启用 RLS 并创建策略
+-- 2. 给 family_members 表启用 RLS
 -- ----------------------------
 ALTER TABLE family_members ENABLE ROW LEVEL SECURITY;
 
--- 删除旧的策略（如果有）
+-- ----------------------------
+-- 3. 清理所有可能冲突的策略（全部 DROP）
+-- ----------------------------
+-- profiles
+DROP POLICY IF EXISTS "Users can view own profile" ON profiles;
+DROP POLICY IF EXISTS "Users can view own and children profiles" ON profiles;
+DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
+
+-- family_members
 DROP POLICY IF EXISTS "Parents can view family members" ON family_members;
 DROP POLICY IF EXISTS "Parents can add family members" ON family_members;
 DROP POLICY IF EXISTS "Parents can remove family members" ON family_members;
 
--- 家长可以查看自己关联的家庭成员
+-- plans
+DROP POLICY IF EXISTS "Users can view own plans" ON plans;
+DROP POLICY IF EXISTS "Users can view own and children plans" ON plans;
+DROP POLICY IF EXISTS "Users can create own plans" ON plans;
+DROP POLICY IF EXISTS "Users can update own plans" ON plans;
+DROP POLICY IF EXISTS "Users can delete own plans" ON plans;
+DROP POLICY IF EXISTS "Parents can view children plans" ON plans;
+DROP POLICY IF EXISTS "Parents can update children plans" ON plans;
+DROP POLICY IF EXISTS "Parents can delete children plans" ON plans;
+
+-- tasks
+DROP POLICY IF EXISTS "Users can view own tasks" ON tasks;
+DROP POLICY IF EXISTS "Users can view own and children tasks" ON tasks;
+DROP POLICY IF EXISTS "Users can create own tasks" ON tasks;
+DROP POLICY IF EXISTS "Users can update own tasks" ON tasks;
+DROP POLICY IF EXISTS "Users can delete own tasks" ON tasks;
+DROP POLICY IF EXISTS "Parents can view children tasks" ON tasks;
+
+-- comments
+DROP POLICY IF EXISTS "Users can view comments" ON comments;
+DROP POLICY IF EXISTS "Users can view own and children comments" ON comments;
+DROP POLICY IF EXISTS "Users can create comments" ON comments;
+DROP POLICY IF EXISTS "Parents can view children comments" ON comments;
+
+-- ----------------------------
+-- 4. 创建新的 RLS 策略
+-- ----------------------------
+
+-- 4a. family_members: 家长可以管理家庭成员
 CREATE POLICY "Parents can view family members" ON family_members
   FOR SELECT USING (
     EXISTS (
@@ -34,7 +71,6 @@ CREATE POLICY "Parents can view family members" ON family_members
     )
   );
 
--- 家长可以添加孩子到家庭
 CREATE POLICY "Parents can add family members" ON family_members
   FOR INSERT WITH CHECK (
     EXISTS (
@@ -44,7 +80,6 @@ CREATE POLICY "Parents can add family members" ON family_members
     )
   );
 
--- 家长可以移除孩子
 CREATE POLICY "Parents can remove family members" ON family_members
   FOR DELETE USING (
     EXISTS (
@@ -54,63 +89,25 @@ CREATE POLICY "Parents can remove family members" ON family_members
     )
   );
 
--- ----------------------------
--- 3. 【关键修复】放宽 profiles 表 RLS 策略
---    让家长可以查看已绑定孩子的资料
--- ----------------------------
-DROP POLICY IF EXISTS "Users can view own profile" ON profiles;
-
-CREATE POLICY "Users can view own and children profiles" ON profiles
+-- 4b. profiles: 每个人可以看自己，家长可以看所有孩子
+CREATE POLICY "Users can view profiles" ON profiles
   FOR SELECT USING (
-    -- 每个人都可以查看自己的资料
     auth.uid() = id
     OR
-    -- 家长可以查看自己绑定的孩子的资料
     EXISTS (
-      SELECT 1 FROM family_members fm
-      WHERE fm.parent_id = auth.uid()
-        AND fm.child_id = profiles.id
-    )
-    OR
-    -- 家长也可以查看所有 role='child' 的资料（方便调试和管理）
-    EXISTS (
-      SELECT 1 FROM profiles parent_p
-      WHERE parent_p.id = auth.uid()
-        AND parent_p.role = 'parent'
+      SELECT 1 FROM profiles p
+      WHERE p.id = auth.uid() AND p.role = 'parent'
     )
   );
 
--- ----------------------------
--- 4. 放宽 tasks 表 RLS 策略
---    让家长可以查看孩子的任务
--- ----------------------------
-DROP POLICY IF EXISTS "Users can view own tasks" ON tasks;
+CREATE POLICY "Users can update own profile" ON profiles
+  FOR UPDATE USING (auth.uid() = id);
 
-CREATE POLICY "Users can view own and children tasks" ON tasks
+-- 4c. plans: 家长可以看自己和孩子创建的计划
+CREATE POLICY "Users can view plans" ON plans
   FOR SELECT USING (
-    -- 查看自己的任务
     auth.uid() = user_id
     OR
-    -- 家长查看自己孩子的任务
-    EXISTS (
-      SELECT 1 FROM family_members fm
-      WHERE fm.parent_id = auth.uid()
-        AND fm.child_id = tasks.user_id
-    )
-  );
-
--- ----------------------------
--- 5. 放宽 plans 表 RLS 策略
---    让家长可以查看孩子的计划
--- ----------------------------
-DROP POLICY IF EXISTS "Users can view own plans" ON plans;
-
-CREATE POLICY "Users can view own and children plans" ON plans
-  FOR SELECT USING (
-    -- 查看自己的计划
-    auth.uid() = user_id
-    OR
-    -- 家长查看自己孩子的计划
     EXISTS (
       SELECT 1 FROM family_members fm
       WHERE fm.parent_id = auth.uid()
@@ -118,18 +115,84 @@ CREATE POLICY "Users can view own and children plans" ON plans
     )
   );
 
--- ----------------------------
--- 6. 放宽 comments 表 RLS 策略
---    让家长可以查看孩子任务的批注
--- ----------------------------
-DROP POLICY IF EXISTS "Users can view comments" ON comments;
+CREATE POLICY "Users can create plans" ON plans
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
 
+CREATE POLICY "Users can update plans" ON plans
+  FOR UPDATE USING (
+    auth.uid() = user_id
+    OR
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.parent_id = auth.uid()
+        AND fm.child_id = plans.user_id
+    )
+  );
+
+CREATE POLICY "Users can delete plans" ON plans
+  FOR DELETE USING (
+    auth.uid() = user_id
+    OR
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.parent_id = auth.uid()
+        AND fm.child_id = plans.user_id
+    )
+  );
+
+-- 4d. tasks: 家长可以看自己孩子的任务
+CREATE POLICY "Users can view tasks" ON tasks
+  FOR SELECT USING (
+    auth.uid() = user_id
+    OR
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.parent_id = auth.uid()
+        AND fm.child_id = tasks.user_id
+    )
+  );
+
+CREATE POLICY "Users can create tasks" ON tasks
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update tasks" ON tasks
+  FOR UPDATE USING (
+    auth.uid() = user_id
+    OR
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.parent_id = auth.uid()
+        AND fm.child_id = tasks.user_id
+    )
+  );
+
+CREATE POLICY "Users can delete tasks" ON tasks
+  FOR DELETE USING (
+    auth.uid() = user_id
+    OR
+    EXISTS (
+      SELECT 1 FROM family_members fm
+      WHERE fm.parent_id = auth.uid()
+        AND fm.child_id = tasks.user_id
+    )
+  );
+
+-- 4e. comments: 家长可以看孩子任务的批注
 CREATE POLICY "Users can view comments" ON comments
   FOR SELECT USING (
-    -- 查看自己任务的批注
     EXISTS (SELECT 1 FROM tasks t WHERE t.id = comments.task_id AND t.user_id = auth.uid())
     OR
-    -- 家长查看自己孩子任务的批注
+    EXISTS (
+      SELECT 1 FROM tasks t
+      JOIN family_members fm ON fm.child_id = t.user_id
+      WHERE t.id = comments.task_id AND fm.parent_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Users can create comments" ON comments
+  FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM tasks t WHERE t.id = comments.task_id AND t.user_id = auth.uid())
+    OR
     EXISTS (
       SELECT 1 FROM tasks t
       JOIN family_members fm ON fm.child_id = t.user_id
@@ -138,10 +201,7 @@ CREATE POLICY "Users can view comments" ON comments
   );
 
 -- ----------------------------
--- 7. 确认绑定关系（调试用）
---    家长"王"的ID: d0e9167e-41a7-4701-a8b0-61c813a28ead
---    孩子"钟歆妤"的ID: 513f3419-0062-454c-aae6-7ff6d97e625d
---    如果下面这条 INSERT 返回 "conflict" 说明已存在，忽略即可
+-- 5. 确认绑定关系（如果不存在则插入）
 -- ----------------------------
 INSERT INTO family_members (parent_id, child_id)
 VALUES (
@@ -151,7 +211,7 @@ VALUES (
 ON CONFLICT (parent_id, child_id) DO NOTHING;
 
 -- ----------------------------
--- 8. 验证查询（调试用，执行后可以看到结果）
+-- 6. 验证查询（执行后可看到结果）
 -- ----------------------------
 -- 查看绑定关系
 SELECT fm.*, p_parent.nickname as parent_nickname, p_child.nickname as child_nickname
